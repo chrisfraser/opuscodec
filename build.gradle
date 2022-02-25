@@ -23,6 +23,9 @@ android {
     defaultConfig {
         minSdkVersion 14
         targetSdkVersion 31
+        versionCode 4
+        versionName "1.3.4"
+        setProperty("archivesBaseName", "opuscodec-" + versionName)
         consumerProguardFiles 'proguard-rules.pro'
         externalNativeBuild {
             ndkBuild {
