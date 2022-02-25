@@ -54,3 +54,5 @@ import-summary.txt
 
 # Reports
 reports/
+
+.cxx/
