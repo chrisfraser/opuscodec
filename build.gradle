@@ -1,14 +1,13 @@
 buildscript {
     repositories {
         google()
-        jcenter()
         mavenCentral()
         maven {
             url "https://jitpack.io"
         }
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.4.2'
+        classpath 'com.android.tools.build:gradle:3.4.3'
         classpath 'com.github.dcendents:android-maven-gradle-plugin:2.1'
     }
 }
@@ -16,14 +15,14 @@ buildscript {
 apply plugin: 'com.android.library'
 apply plugin: 'com.github.dcendents.android-maven'
 
-group = 'com.github.martoreto'
+group = 'com.github.chrisfraser'
 
 android {
-    compileSdkVersion 29
+    compileSdkVersion 31
 
     defaultConfig {
         minSdkVersion 14
-        targetSdkVersion 29
+        targetSdkVersion 31
         consumerProguardFiles 'proguard-rules.pro'
         externalNativeBuild {
             ndkBuild {
@@ -54,5 +53,5 @@ repositories {
 }
 
 dependencies {
-    implementation 'androidx.annotation:annotation:1.1.0'
+    implementation 'androidx.annotation:annotation:1.3.0'
 }
