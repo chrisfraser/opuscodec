@@ -64,10 +64,19 @@ void ec_enc_bit_logp(ec_enc *_this,int _val,unsigned _logp);
   _ftb: The number of bits of precision in the cumulative distribution.*/
 void ec_enc_icdf(ec_enc *_this,int _s,const unsigned char *_icdf,unsigned _ftb);
 
+/*Encodes a symbol given an "inverse" CDF table.
+  _s:    The index of the symbol to encode.
+  _icdf: The "inverse" CDF, such that symbol _s falls in the range
+          [_s>0?ft-_icdf[_s-1]:0,ft-_icdf[_s]), where ft=1<<_ftb.
+         The values must be monotonically non-increasing, and the last value
+          must be 0.
+  _ftb: The number of bits of precision in the cumulative distribution.*/
+void ec_enc_icdf16(ec_enc *_this,int _s,const opus_uint16 *_icdf,unsigned _ftb);
+
 /*Encodes a raw unsigned integer in the stream.
   _fl: The integer to encode.
   _ft: The number of integers that can be encoded (one more than the max).
-       This must be at least one, and no more than 2**32-1.*/
+       This must be at least 2, and no more than 2**32-1.*/
 void ec_enc_uint(ec_enc *_this,opus_uint32 _fl,opus_uint32 _ft);
 
 /*Encodes a sequence of raw bits in the stream.

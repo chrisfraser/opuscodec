@@ -26,8 +26,8 @@
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef __VQ_MIPSR1_H__
-#define __VQ_MIPSR1_H__
+#ifndef VQ_MIPSR1_H__
+#define VQ_MIPSR1_H__
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -35,8 +35,6 @@
 
 #include "mathops.h"
 #include "arch.h"
-
-static void renormalise_vector_mips(celt_norm *X, int N, opus_val16 gain, int arch);
 
 #define OVERRIDE_vq_exp_rotation1
 static void exp_rotation1(celt_norm *X, int len, int stride, opus_val16 c, opus_val16 s)
@@ -66,11 +64,7 @@ static void exp_rotation1(celt_norm *X, int len, int stride, opus_val16 c, opus_
 }
 
 #define OVERRIDE_renormalise_vector
-
-#define renormalise_vector(X, N, gain, arch) \
- (renormalise_vector_mips(X, N, gain, arch))
-
-void renormalise_vector_mips(celt_norm *X, int N, opus_val16 gain, int arch)
+void renormalise_vector(celt_norm *X, int N, opus_val16 gain, int arch)
 {
    int i;
 #ifdef FIXED_POINT
@@ -119,4 +113,4 @@ void renormalise_vector_mips(celt_norm *X, int N, opus_val16 gain, int arch)
    /*return celt_sqrt(E);*/
 }
 
-#endif /* __VQ_MIPSR1_H__ */
+#endif /* VQ_MIPSR1_H__ */

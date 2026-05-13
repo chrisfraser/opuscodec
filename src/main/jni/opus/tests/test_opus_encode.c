@@ -140,7 +140,7 @@ int get_frame_size_enum(int frame_size, int sampling_rate)
    return frame_size_enum;
 }
 
-void test_encode(OpusEncoder *enc, int channels, int frame_size, OpusDecoder *dec, const char* debug_info)
+int test_encode(OpusEncoder *enc, int channels, int frame_size, OpusDecoder *dec)
 {
    int samp_count = 0;
    opus_int16 *inbuf;
@@ -148,7 +148,16 @@ void test_encode(OpusEncoder *enc, int channels, int frame_size, OpusDecoder *de
    int len;
    opus_int16 *outbuf;
    int out_samples;
-
+   int ret = 0;
+#ifdef ENABLE_DRED
+   OpusDREDDecoder *dred_dec;
+   OpusDRED *dred;
+   int dred_end;
+   int dred_amount;
+   int dred_ret;
+   dred_dec = opus_dred_decoder_create(&dred_ret);
+   dred = opus_dred_alloc(&dred_ret);
+#endif
    /* Generate input data */
    inbuf = (opus_int16*)malloc(sizeof(*inbuf)*SSAMPLES);
    generate_music(inbuf, SSAMPLES/2);
@@ -160,24 +169,43 @@ void test_encode(OpusEncoder *enc, int channels, int frame_size, OpusDecoder *de
    do {
       len = opus_encode(enc, &inbuf[samp_count*channels], frame_size, packet, MAX_PACKET);
       if(len<0 || len>MAX_PACKET) {
-         fprintf(stderr,"%s\n",debug_info);
          fprintf(stderr,"opus_encode() returned %d\n",len);
-         test_failed();
+         ret = -1;
+         break;
       }
-
+#ifdef ENABLE_DRED
+      dred_amount = opus_dred_parse(dred_dec, dred, packet, len, 48000, 48000, &dred_end, 0);
+      if(dred_amount<0) {
+         fprintf(stderr,"opus_dred_parse() returned %d\n",dred_amount);
+         ret = -1;
+         break;
+      }
+      if (dred_amount >= frame_size && (fast_rand()&1)) {
+         dred_ret = opus_decoder_dred_decode(dec, dred, frame_size, outbuf, frame_size);
+         if(dred_ret<0) {
+            fprintf(stderr,"opus_decoder_dred_decode() returned %d\n",dred_ret);
+            ret = -1;
+            break;
+         }
+      }
+#endif
       out_samples = opus_decode(dec, packet, len, outbuf, MAX_FRAME_SAMP, 0);
       if(out_samples!=frame_size) {
-         fprintf(stderr,"%s\n",debug_info);
          fprintf(stderr,"opus_decode() returned %d\n",out_samples);
-         test_failed();
+         ret = -1;
+         break;
       }
 
       samp_count += frame_size;
    } while (samp_count < ((SSAMPLES/2)-MAX_FRAME_SAMP));
-
+#ifdef ENABLE_DRED
+   opus_dred_decoder_destroy(dred_dec);
+   opus_dred_free(dred);
+#endif
    /* Clean up */
    free(inbuf);
    free(outbuf);
+   return ret;
 }
 
 void fuzz_encoder_settings(const int num_encoders, const int num_setting_changes)
@@ -205,7 +233,6 @@ void fuzz_encoder_settings(const int num_encoders, const int num_setting_changes
    int prediction_disabled[3] = {0, 0, 1};
    int use_dtx[2] = {0, 1};
    int frame_sizes_ms_x2[9] = {5, 10, 20, 40, 80, 120, 160, 200, 240};  /* x2 to avoid 2.5 ms */
-   char debug_info[512];
 
    for (i=0; i<num_encoders; i++) {
       int sampling_rate = RAND_SAMPLE(sampling_rates);
@@ -236,15 +263,6 @@ void fuzz_encoder_settings(const int num_encoders, const int num_setting_changes
          int frame_size_enum = get_frame_size_enum(frame_size, sampling_rate);
          force_channel = IMIN(force_channel, num_channels);
 
-         sprintf(debug_info,
-                 "fuzz_encoder_settings: %d kHz, %d ch, application: %d, "
-                 "%d bps, force ch: %d, vbr: %d, vbr constraint: %d, complexity: %d, "
-                 "max bw: %d, signal: %d, inband fec: %d, pkt loss: %d%%, lsb depth: %d, "
-                 "pred disabled: %d, dtx: %d, (%d/2) ms\n",
-                 sampling_rate/1000, num_channels, application, bitrate,
-                 force_channel, vbr, vbr_constraint, complexity, max_bw, sig, inband_fec,
-                 pkt_loss, lsb_depth, pred_disabled, dtx, frame_size_ms_x2);
-
          if(opus_encoder_ctl(enc, OPUS_SET_BITRATE(bitrate)) != OPUS_OK) test_failed();
          if(opus_encoder_ctl(enc, OPUS_SET_FORCE_CHANNELS(force_channel)) != OPUS_OK) test_failed();
          if(opus_encoder_ctl(enc, OPUS_SET_VBR(vbr)) != OPUS_OK) test_failed();
@@ -258,8 +276,20 @@ void fuzz_encoder_settings(const int num_encoders, const int num_setting_changes
          if(opus_encoder_ctl(enc, OPUS_SET_PREDICTION_DISABLED(pred_disabled)) != OPUS_OK) test_failed();
          if(opus_encoder_ctl(enc, OPUS_SET_DTX(dtx)) != OPUS_OK) test_failed();
          if(opus_encoder_ctl(enc, OPUS_SET_EXPERT_FRAME_DURATION(frame_size_enum)) != OPUS_OK) test_failed();
-
-         test_encode(enc, num_channels, frame_size, dec, debug_info);
+#ifdef ENABLE_DRED
+         if(opus_encoder_ctl(enc, OPUS_SET_DRED_DURATION(fast_rand()%101)) != OPUS_OK) test_failed();
+#endif
+         if(test_encode(enc, num_channels, frame_size, dec)) {
+            fprintf(stderr,
+               "fuzz_encoder_settings: %d kHz, %d ch, application: %d, "
+               "%d bps, force ch: %d, vbr: %d, vbr constraint: %d, complexity: %d, "
+               "max bw: %d, signal: %d, inband fec: %d, pkt loss: %d%%, lsb depth: %d, "
+               "pred disabled: %d, dtx: %d, (%d/2) ms\n",
+               sampling_rate/1000, num_channels, application, bitrate,
+               force_channel, vbr, vbr_constraint, complexity, max_bw, sig, inband_fec,
+               pkt_loss, lsb_depth, pred_disabled, dtx, frame_size_ms_x2);
+            test_failed();
+         }
       }
 
       opus_encoder_destroy(enc);
@@ -295,6 +325,7 @@ int run_test1(int no_fuzz)
   /*FIXME: encoder api tests, fs!=48k, mono, VBR*/
 
    fprintf(stdout,"  Encode+Decode tests.\n");
+   fflush(stdout);
 
    enc = opus_encoder_create(48000, 2, OPUS_APPLICATION_VOIP, &err);
    if(err != OPUS_OK || enc==NULL)test_failed();
@@ -392,6 +423,9 @@ int run_test1(int no_fuzz)
       if(opus_encoder_ctl(enc, OPUS_SET_VBR_CONSTRAINT(rc==1))!=OPUS_OK)test_failed();
       if(opus_encoder_ctl(enc, OPUS_SET_VBR_CONSTRAINT(rc==1))!=OPUS_OK)test_failed();
       if(opus_encoder_ctl(enc, OPUS_SET_INBAND_FEC(rc==0))!=OPUS_OK)test_failed();
+#ifdef ENABLE_DRED
+      if(opus_encoder_ctl(enc, OPUS_SET_DRED_DURATION(fast_rand()%101)) != OPUS_OK) test_failed();
+#endif
       for(j=0;j<13;j++)
       {
          int rate;
@@ -464,6 +498,7 @@ int run_test1(int no_fuzz)
             count++;
          }while(i<(SSAMPLES-MAX_FRAME_SAMP));
          fprintf(stdout,"    Mode %s FB encode %s, %6d bps OK.\n",mstrings[modes[j]],rc==0?" VBR":rc==1?"CVBR":" CBR",rate);
+         fflush(stdout);
       }
    }
 
@@ -541,6 +576,7 @@ int run_test1(int no_fuzz)
             count++;
          }while(i<(SSAMPLES/12-MAX_FRAME_SAMP));
          fprintf(stdout,"    Mode %s NB dual-mono MS encode %s, %6d bps OK.\n",mstrings[modes[j]],rc==0?" VBR":rc==1?"CVBR":" CBR",rate);
+         fflush(stdout);
       }
    }
 
@@ -610,6 +646,7 @@ int run_test1(int no_fuzz)
       i+=frame_size;
    }while(i<SAMPLES*4);
    fprintf(stdout,"    All framesize pairs switching encode, %d frames OK.\n",count);
+   fflush(stdout);
 
    if(opus_encoder_ctl(enc, OPUS_RESET_STATE)!=OPUS_OK)test_failed();
    opus_encoder_destroy(enc);

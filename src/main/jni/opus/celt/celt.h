@@ -42,6 +42,10 @@
 #include "entdec.h"
 #include "arch.h"
 
+#ifdef ENABLE_DEEP_PLC
+#include "lpcnet.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,9 +63,11 @@ typedef struct {
    float noisiness;
    float activity;
    float music_prob;
-   float vad_prob;
+   float music_prob_min;
+   float music_prob_max;
    int   bandwidth;
    float activity_probability;
+   float max_pitch_ratio;
    /* Store as Q6 char to save space. */
    unsigned char leak_boost[LEAK_BANDS];
 } AnalysisInfo;
@@ -147,6 +153,13 @@ int celt_decoder_get_size(int channels);
 
 int celt_decoder_init(CELTDecoder *st, opus_int32 sampling_rate, int channels);
 
+int celt_decode_with_ec_dred(CELTDecoder * OPUS_RESTRICT st, const unsigned char *data,
+      int len, opus_val16 * OPUS_RESTRICT pcm, int frame_size, ec_dec *dec, int accum
+#ifdef ENABLE_DEEP_PLC
+      ,LPCNetPLCState *lpcnet
+#endif
+      );
+
 int celt_decode_with_ec(OpusCustomDecoder * OPUS_RESTRICT st, const unsigned char *data,
       int len, opus_val16 * OPUS_RESTRICT pcm, int frame_size, ec_dec *dec, int accum);
 
@@ -207,6 +220,13 @@ static OPUS_INLINE int fromOpus(unsigned char c)
 
 extern const signed char tf_select_table[4][8];
 
+#if defined(ENABLE_HARDENING) || defined(ENABLE_ASSERTIONS)
+void validate_celt_decoder(CELTDecoder *st);
+#define VALIDATE_CELT_DECODER(st) validate_celt_decoder(st)
+#else
+#define VALIDATE_CELT_DECODER(st)
+#endif
+
 int resampling_factor(opus_int32 rate);
 
 void celt_preemphasis(const opus_val16 * OPUS_RESTRICT pcmp, celt_sig * OPUS_RESTRICT inp,
@@ -216,23 +236,13 @@ void comb_filter(opus_val32 *y, opus_val32 *x, int T0, int T1, int N,
       opus_val16 g0, opus_val16 g1, int tapset0, int tapset1,
       const opus_val16 *window, int overlap, int arch);
 
-#ifdef NON_STATIC_COMB_FILTER_CONST_C
-void comb_filter_const_c(opus_val32 *y, opus_val32 *x, int T, int N,
-                         opus_val16 g10, opus_val16 g11, opus_val16 g12);
-#endif
-
-#ifndef OVERRIDE_COMB_FILTER_CONST
-# define comb_filter_const(y, x, T, N, g10, g11, g12, arch) \
-    ((void)(arch),comb_filter_const_c(y, x, T, N, g10, g11, g12))
-#endif
-
 void init_caps(const CELTMode *m,int *cap,int LM,int C);
 
 #ifdef RESYNTH
-void deemphasis(celt_sig *in[], opus_val16 *pcm, int N, int C, int downsample, const opus_val16 *coef, celt_sig *mem);
+void deemphasis(celt_sig *in[], opus_val16 *pcm, int N, int C, int downsample, const opus_val16 *coef, celt_sig *mem, int accum);
 void celt_synthesis(const CELTMode *mode, celt_norm *X, celt_sig * out_syn[],
       opus_val16 *oldBandE, int start, int effEnd, int C, int CC, int isTransient,
-      int LM, int downsample, int silence);
+      int LM, int downsample, int silence, int arch);
 #endif
 
 #ifdef __cplusplus

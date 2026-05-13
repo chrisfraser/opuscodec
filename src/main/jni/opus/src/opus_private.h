@@ -33,6 +33,7 @@
 #include "opus.h"
 #include "celt.h"
 
+#include <stdarg.h> /* va_list */
 #include <stddef.h> /* offsetof */
 
 struct OpusRepacketizer {
@@ -41,7 +42,16 @@ struct OpusRepacketizer {
    const unsigned char *frames[48];
    opus_int16 len[48];
    int framesize;
+   const unsigned char *paddings[48];
+   opus_int32 padding_len[48];
 };
+
+typedef struct {
+   int id;
+   int frame;
+   const unsigned char *data;
+   opus_int32 len;
+} opus_extension_data;
 
 typedef struct ChannelLayout {
    int nb_channels;
@@ -50,12 +60,59 @@ typedef struct ChannelLayout {
    unsigned char mapping[256];
 } ChannelLayout;
 
+typedef enum {
+  MAPPING_TYPE_NONE,
+  MAPPING_TYPE_SURROUND,
+  MAPPING_TYPE_AMBISONICS
+} MappingType;
+
+struct OpusMSEncoder {
+   ChannelLayout layout;
+   int arch;
+   int lfe_stream;
+   int application;
+   int variable_duration;
+   MappingType mapping_type;
+   opus_int32 bitrate_bps;
+   /* Encoder states go here */
+   /* then opus_val32 window_mem[channels*120]; */
+   /* then opus_val32 preemph_mem[channels]; */
+};
+
+struct OpusMSDecoder {
+   ChannelLayout layout;
+   /* Decoder states go here */
+};
+
+int opus_multistream_encoder_ctl_va_list(struct OpusMSEncoder *st, int request,
+  va_list ap);
+int opus_multistream_decoder_ctl_va_list(struct OpusMSDecoder *st, int request,
+  va_list ap);
+
 int validate_layout(const ChannelLayout *layout);
 int get_left_channel(const ChannelLayout *layout, int stream_id, int prev);
 int get_right_channel(const ChannelLayout *layout, int stream_id, int prev);
 int get_mono_channel(const ChannelLayout *layout, int stream_id, int prev);
 
+typedef void (*opus_copy_channel_in_func)(
+  opus_val16 *dst,
+  int dst_stride,
+  const void *src,
+  int src_stride,
+  int src_channel,
+  int frame_size,
+  void *user_data
+);
 
+typedef void (*opus_copy_channel_out_func)(
+  void *dst,
+  int dst_stride,
+  int dst_channel,
+  const opus_val16 *src,
+  int src_stride,
+  int frame_size,
+  void *user_data
+);
 
 #define MODE_SILK_ONLY          1000
 #define MODE_HYBRID             1001
@@ -87,6 +144,7 @@ int get_mono_channel(const ChannelLayout *layout, int stream_id, int prev);
 typedef void (*downmix_func)(const void *, opus_val32 *, int, int, int, int, int);
 void downmix_float(const void *_x, opus_val32 *sub, int subframe, int offset, int c1, int c2, int C);
 void downmix_int(const void *_x, opus_val32 *sub, int subframe, int offset, int c1, int c2, int C);
+int is_digital_silence(const opus_val16* pcm, int frame_size, int channels, int lsb_depth);
 
 int encode_size(int size, unsigned char *data);
 
@@ -99,7 +157,7 @@ opus_int32 opus_encode_native(OpusEncoder *st, const opus_val16 *pcm, int frame_
 
 int opus_decode_native(OpusDecoder *st, const unsigned char *data, opus_int32 len,
       opus_val16 *pcm, int frame_size, int decode_fec, int self_delimited,
-      opus_int32 *packet_offset, int soft_clip);
+      opus_int32 *packet_offset, int soft_clip, const OpusDRED *dred, opus_int32 dred_offset);
 
 /* Make sure everything is properly aligned. */
 static OPUS_INLINE int align(int i)
@@ -113,14 +171,53 @@ static OPUS_INLINE int align(int i)
     return ((i + alignment - 1) / alignment) * alignment;
 }
 
+/* More than that is ridiculous for now (3 * max frames per packet)*/
+opus_int32 skip_extension(const unsigned char **data, opus_int32 len, opus_int32 *header_size);
+
 int opus_packet_parse_impl(const unsigned char *data, opus_int32 len,
       int self_delimited, unsigned char *out_toc,
       const unsigned char *frames[48], opus_int16 size[48],
-      int *payload_offset, opus_int32 *packet_offset);
+      int *payload_offset, opus_int32 *packet_offset,
+      const unsigned char **padding, opus_int32 *padding_len);
 
 opus_int32 opus_repacketizer_out_range_impl(OpusRepacketizer *rp, int begin, int end,
-      unsigned char *data, opus_int32 maxlen, int self_delimited, int pad);
+      unsigned char *data, opus_int32 maxlen, int self_delimited, int pad,
+      const opus_extension_data *extensions, int nb_extensions);
 
 int pad_frame(unsigned char *data, opus_int32 len, opus_int32 new_len);
+
+int opus_multistream_encode_native
+(
+  struct OpusMSEncoder *st,
+  opus_copy_channel_in_func copy_channel_in,
+  const void *pcm,
+  int analysis_frame_size,
+  unsigned char *data,
+  opus_int32 max_data_bytes,
+  int lsb_depth,
+  downmix_func downmix,
+  int float_api,
+  void *user_data
+);
+
+int opus_multistream_decode_native(
+  struct OpusMSDecoder *st,
+  const unsigned char *data,
+  opus_int32 len,
+  void *pcm,
+  opus_copy_channel_out_func copy_channel_out,
+  int frame_size,
+  int decode_fec,
+  int soft_clip,
+  void *user_data
+);
+
+opus_int32 opus_packet_extensions_parse(const unsigned char *data, opus_int32 len, opus_extension_data *extensions, opus_int32 *nb_extensions);
+
+opus_int32 opus_packet_extensions_generate(unsigned char *data, opus_int32 len, const opus_extension_data  *extensions, opus_int32 nb_extensions, int pad);
+
+opus_int32 opus_packet_extensions_count(const unsigned char *data, opus_int32 len);
+
+opus_int32 opus_packet_pad_impl(unsigned char *data, opus_int32 len, opus_int32 new_len, int pad, const opus_extension_data  *extensions, int nb_extensions);
 
 #endif /* OPUS_PRIVATE_H */

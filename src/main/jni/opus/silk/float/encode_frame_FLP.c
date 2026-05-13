@@ -42,21 +42,28 @@ static OPUS_INLINE void silk_LBRR_encode_FLP(
 );
 
 void silk_encode_do_VAD_FLP(
-    silk_encoder_state_FLP          *psEnc                              /* I/O  Encoder state FLP                           */
+    silk_encoder_state_FLP          *psEnc,                             /* I/O  Encoder state FLP                           */
+    opus_int                        activity                            /* I    Decision of Opus voice activity detector    */
 )
 {
+    const opus_int activity_threshold = SILK_FIX_CONST( SPEECH_ACTIVITY_DTX_THRES, 8 );
+
     /****************************/
     /* Voice Activity Detection */
     /****************************/
     silk_VAD_GetSA_Q8( &psEnc->sCmn, psEnc->sCmn.inputBuf + 1, psEnc->sCmn.arch );
+    /* If Opus VAD is inactive and Silk VAD is active: lower Silk VAD to just under the threshold */
+    if( activity == VAD_NO_ACTIVITY && psEnc->sCmn.speech_activity_Q8 >= activity_threshold ) {
+        psEnc->sCmn.speech_activity_Q8 = activity_threshold - 1;
+    }
 
     /**************************************************/
     /* Convert speech activity into VAD and DTX flags */
     /**************************************************/
-    if( psEnc->sCmn.speech_activity_Q8 < SILK_FIX_CONST( SPEECH_ACTIVITY_DTX_THRES, 8 ) ) {
+    if( psEnc->sCmn.speech_activity_Q8 < activity_threshold ) {
         psEnc->sCmn.indices.signalType = TYPE_NO_VOICE_ACTIVITY;
         psEnc->sCmn.noSpeechCounter++;
-        if( psEnc->sCmn.noSpeechCounter < NB_SPEECH_FRAMES_BEFORE_DTX ) {
+        if( psEnc->sCmn.noSpeechCounter <= NB_SPEECH_FRAMES_BEFORE_DTX ) {
             psEnc->sCmn.inDTX = 0;
         } else if( psEnc->sCmn.noSpeechCounter > MAX_CONSECUTIVE_DTX + NB_SPEECH_FRAMES_BEFORE_DTX ) {
             psEnc->sCmn.noSpeechCounter = NB_SPEECH_FRAMES_BEFORE_DTX;
@@ -100,7 +107,10 @@ opus_int silk_encode_frame_FLP(
     opus_int     gain_lock[ MAX_NB_SUBFR ] = {0};
     opus_int16   best_gain_mult[ MAX_NB_SUBFR ];
     opus_int     best_sum[ MAX_NB_SUBFR ];
+    opus_int     bits_margin;
 
+    /* For CBR, 5 bits below budget is close enough. For VBR, allow up to 25% below the cap if we initially busted the budget. */
+    bits_margin = useCBR ? 5 : maxBits/4;
     /* This is totally unnecessary but many compilers (including gcc) are too dumb to realise it */
     LastGainIndex_copy2 = nBits_lower = nBits_upper = gainMult_lower = gainMult_upper = 0;
 
@@ -241,7 +251,7 @@ opus_int silk_encode_frame_FLP(
                 if( found_lower && ( gainsID == gainsID_lower || nBits > maxBits ) ) {
                     /* Restore output state from earlier iteration that did meet the bitrate budget */
                     silk_memcpy( psRangeEnc, &sRangeEnc_copy2, sizeof( ec_enc ) );
-                    silk_assert( sRangeEnc_copy2.offs <= 1275 );
+                    celt_assert( sRangeEnc_copy2.offs <= 1275 );
                     silk_memcpy( psRangeEnc->buf, ec_buf_copy, sRangeEnc_copy2.offs );
                     silk_memcpy( &psEnc->sCmn.sNSQ, &sNSQ_copy2, sizeof( silk_nsq_state ) );
                     psEnc->sShape.LastGainIndex = LastGainIndex_copy2;
@@ -263,7 +273,7 @@ opus_int silk_encode_frame_FLP(
                     gainMult_upper = gainMult_Q8;
                     gainsID_upper = gainsID;
                 }
-            } else if( nBits < maxBits - 5 ) {
+            } else if( nBits < maxBits - bits_margin ) {
                 found_lower = 1;
                 nBits_lower = nBits;
                 gainMult_lower = gainMult_Q8;
@@ -271,13 +281,13 @@ opus_int silk_encode_frame_FLP(
                     gainsID_lower = gainsID;
                     /* Copy part of the output state */
                     silk_memcpy( &sRangeEnc_copy2, psRangeEnc, sizeof( ec_enc ) );
-                    silk_assert( psRangeEnc->offs <= 1275 );
+                    celt_assert( psRangeEnc->offs <= 1275 );
                     silk_memcpy( ec_buf_copy, psRangeEnc->buf, psRangeEnc->offs );
                     silk_memcpy( &sNSQ_copy2, &psEnc->sCmn.sNSQ, sizeof( silk_nsq_state ) );
                     LastGainIndex_copy2 = psEnc->sShape.LastGainIndex;
                 }
             } else {
-                /* Within 5 bits of budget: close enough */
+                /* Close enough */
                 break;
             }
 
@@ -299,15 +309,9 @@ opus_int silk_encode_frame_FLP(
             if( ( found_lower & found_upper ) == 0 ) {
                 /* Adjust gain according to high-rate rate/distortion curve */
                 if( nBits > maxBits ) {
-                    if (gainMult_Q8 < 16384) {
-                        gainMult_Q8 *= 2;
-                    } else {
-                        gainMult_Q8 = 32767;
-                    }
+                    gainMult_Q8 = silk_min_32( 1024, gainMult_Q8*3/2 );
                 } else {
-                    opus_int32 gain_factor_Q16;
-                    gain_factor_Q16 = silk_log2lin( silk_LSHIFT( nBits - maxBits, 7 ) / psEnc->sCmn.frame_length + SILK_FIX_CONST( 16, 7 ) );
-                    gainMult_Q8 = silk_SMULWB( gain_factor_Q16, gainMult_Q8 );
+                    gainMult_Q8 = silk_max_32( 64, gainMult_Q8*4/5 );
                 }
             } else {
                 /* Adjust gain by interpolating */

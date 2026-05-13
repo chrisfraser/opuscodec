@@ -33,8 +33,6 @@
 #define CUSTOM_MODES
 #endif
 
-#define CELT_C
-
 #include <stdio.h>
 #include <stdlib.h>
 #include "vq.h"
@@ -84,5 +82,6 @@ int main(void)
    test_rotation(23, 5);
    test_rotation(50, 3);
    test_rotation(80, 1);
+   RESTORE_STACK;
    return ret;
 }
